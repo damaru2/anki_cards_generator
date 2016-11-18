@@ -22,10 +22,11 @@ class AnkiAutomatic:
         tr = ParseTranslation(translation)
         concept = tr.get_concept()
         prefix = self.pref(tr.next_line())
+        if prefix == "":
+            return
         line = self.normalize(tr.next_line())
-        finish = prefix == ""
         n_def = 0  # Number of definitions
-        while finish is not True:
+        while True:
             n_def += 1
             if len(line) == 0:
                 break
@@ -120,12 +121,16 @@ class ParseTranslation:
         self.counter = -1
         self.concept = self.next_line().lower()
         phonetic = self.next_line()
-        if phonetic[0] == '/':  # There was a phonetic line
+        # If there was a phonetic line, extra read
+        if len(phonetic) > 0 and phonetic[0] == '/':
             self.next_line()
 
     def next_line(self):
         self.counter += 1
-        return self.translation[self.counter]
+        try:
+            return self.translation[self.counter]
+        except IndexError:
+            return ''
 
     def get_concept(self):
         return self.concept
