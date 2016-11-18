@@ -2,112 +2,134 @@
 # -*- coding: utf-8 -*-
 
 import os
+import clipboard
+
 # TODO: Permitir editar la definición
-
-targetFile = '/home/david/Downloads/Anki Decks/ankiVocDeck.txt'
-
-
-def pref(x):
-    return {
-        "sustantivo\n": "(n.) ",
-        "verbo\n": "(v.) ",
-        "adjetivo\n": "(adj.) ",
-        "adverbio\n": "(adv.) ",
-        "preposición\n": "(prep.) ",
-        "exclamación\n": "(excl.)",
-        "conjunción\n": "(conj.)"
-    }.get(x, "")   # "" is default if x not found
+# Sudo pip3 install clipboard
 
 
-os.system("xclip -o > .text")
-f = open('.text', 'r')
-concept = f.read().split()
-if len(concept) == 1:
-    definitions = ""
-    os.system("trans -d en:en `cat .text` > .translation")
+class AnkiAutomatic:
 
-    f = open('.translation', 'r')
-    concept = f.readline()
-    concept = concept[:-1]
-    concept = concept.lower()
-    phonetic = f.readline()
-    if phonetic[0] == '/':  # There was a phonetic line
-        f.readline()  # Now there is an empty line then
-    line = f.readline()
-    prefix = pref(line)
-    finish = prefix == ""
-    line = f.readline().split()
-    counter = 0
-    while finish is not True:
-        counter += 1
-        line = line[1:len(line)]
-        if len(line) == 0:
-            break
-        line[len(line) - 1] = line[len(line) - 1].split('.')[0]
-        definitions += "FALSE \"\\\""
-        definitions += prefix
-        for word in line:
-            definitions += word + " "
-        line = f.readline()  # read example
-        if line[0] == '"':
-            definitions += "(e.g. "
-            line = line[line.find("\"") + 1:]
+    target_file = '/home/david/Downloads/Anki Decks/ankiVocDeck.txt'
+    last = ["Sinónimos", "Ejemplos", "Ver también"]
+
+    def run(self):
+        concept = clipboard.paste().strip()
+        if concept.find(" ") != -1:
+            return
+        definitions = ""
+        translation = os.popen("trans -d en:en " + concept).read()
+        tr = ParseTranslation(translation)
+        concept = tr.get_concept()
+        prefix = self.pref(tr.next_line())
+        line = self.normalize(tr.next_line())
+        finish = prefix == ""
+        n_def = 0  # Number of definitions
+        while finish is not True:
+            n_def += 1
+            if len(line) == 0:
+                break
+            # There must be a FALSE before every definition if there is more than one
+            definitions += "FALSE \"\\\""
+            definitions += prefix
+            definitions += line
+            definitions += self.parse_example(tr.next_line(), concept)
+            definitions += "\\\"; " + concept + "\" "
+            line = tr.next_line()
+            if line in AnkiAutomatic.last:
+                break
+            if self.pref(line) == "":
+                while line != "":
+                    line = tr.next_line()
+                line = tr.next_line()
+                if line in AnkiAutomatic.last:
+                    break
+            new_prefix = self.pref(line)
+            if new_prefix != "":  # Change of prefix
+                prefix = new_prefix
+                line = self.normalize(tr.next_line())
+            else:
+                line = self.normalize(line)
+        card_lines = self.ask_user(n_def, definitions, concept)
+        self.send_to_file(card_lines)
+
+    def pref(self, x):
+        return {
+            "sustantivo": "(n.) ",
+            "verbo": "(v.) ",
+            "adjetivo": "(adj.) ",
+            "adverbio": "(adv.) ",
+            "preposición": "(prep.) ",
+            "exclamación": "(excl.) ",
+            "conjunción": "(conj.) "
+        }.get(x, "")   # "" is default if x not found
+
+    def normalize(self, line):
+        # Remove first and last "words" which are format tags
+        return line.rsplit('.', 1)[0].split(' ', 1)[1].strip()
+
+    def parse_example(self, example, concept):
+        if example[:11] == '        - \"':   # If there is example
+            # This removes the concept or variations of it
+            example = example.split("\"")[1]
 
             # remove concept variations
             dots = "....."
-            line = line[: -1].replace(concept + "s", dots)
-            line = line.replace(concept + "es", dots)
+            example = example.replace(concept + "s", dots)
+            example = example.replace(concept + "es", dots)
             if concept[-1] == 'e':
-                line = line.replace(concept + "d", dots)
-            line = line.replace(concept + "ed", dots)
-            line = line.replace(concept + concept[-1:] + "ed", dots)
-            line = line.replace(concept + "ing", dots)
-            line = line.replace(concept + concept[-1:] + "ing", dots)
-            if concept[-1:] == 'y':
-                line = line[: -1].replace(concept[:-1] + "ies", dots)
-            line = line[: -1].replace(concept, dots)
-
-            definitions += line + ")"
-        definitions += "\\\"; " + concept + "\" "
-        line = f.readline()
-        if line == "Sinónimos\n" or line == "Ejemplos\n" or line == "Ver también":
-            finish = True
-        while line != "\n":
-            line = f.readline()
-        line = f.readline()
-        if line == "Sinónimos\n" or line == "Ejemplos\n" or line == "Ver también":
-            finish = True
+                example = example.replace(concept + "d", dots)
+                example = example.replace(concept[:-1] + "ing", dots)
+            example = example.replace(concept + "ed", dots)
+            example = example.replace(concept + concept[-1] + "ed", dots)
+            example = example.replace(concept + "ing", dots)
+            example = example.replace(concept + concept[-1] + "ing", dots)
+            if concept[-1] == 'y':
+                example = example.replace(concept[:-1] + "ies", dots)
+            example = example.replace(concept, dots)
+            return " (e.g. " + example + ")"
         else:
-            new_prefix = pref(line)
-            if new_prefix != "":
-                prefix = new_prefix
-                line = f.readline().split()
-            else:
-                line = line.split()
-    if counter == 1:
-        definitions = definitions.replace("\\\"", "\"")[7:-2]
-        confirm = os.system("zenity --question --ok-label=\"Ok\" --cancel-label=\"Cancelar\"  --height=10 --text=\"" +
-                            "Añadida a anki la tarjeta:\n" + definitions.replace("\"", "\\\"") + "\"")
-        if confirm == 0:
-            f = open(targetFile, 'a')
-            f.write(definitions + "\n")
-            f.close()
-    elif counter > 1:
-        os.system("ans=$(zenity  --list --text '" + concept + " - Seleciona las definiciones para añadir a la base de datos de Anki' --checklist  --column \"Pick\" --column \"Definitions\" " +
-                  definitions + "  --width=500 --height=450); echo $ans > .answer")
-        f.close()
+            return ''
 
-        f = open('.answer', 'r')
-        lines = f.read()
-        lines = lines[:-1].split('|')
-        f.close
-
-        f = open(targetFile, 'a')
-        for line in lines:
+    def send_to_file(self, card_lines):
+        f = open(AnkiAutomatic.target_file, 'a')
+        for line in card_lines:
             f.write(line + "\n")
         f.close()
-        os.system("rm .answer")
-    else:  # no definitions found
-        os.system("zenity --question --ok-label=\"Ok\" --cancel-label=\"Cancelar\"  --height=10 --text=\"No se ha encontrado una definición para \\\"" + concept + "\\\" \"")
 
-    os.system("rm .text .translation")
+    def ask_user(self, n_def, definitions, concept):
+        card_lines = []
+        if n_def == 1:
+            definitions = definitions.replace("\\\"", "\"")[7:-2]
+            confirm = os.system('''zenity --question --ok-label=\"Ok\" --cancel-label=\"Cancelar\"  --height=10 --text=\" Se añadirá a anki la tarjeta:\n {} \"'''
+                    .format(definitions.replace("\"", "\\\"")))
+            if confirm == 0:
+                card_lines.append(definitions)
+        elif n_def > 1:
+            lines = os.popen("zenity  --list --text '{} - Seleciona las definiciones para añadir a la base de datos de Anki' --checklist --column \"Pick\" --column \"Definitions\" {} --width=1000 --height=450".format(concept, definitions)).read()
+            card_lines = lines[:-1].split('|')
+        else:  # no definitions found
+            os.system("zenity --question --ok-label=\"Ok\" --cancel-label=\"Cancelar\"  --height=10 --text=\"No se ha encontrado una definición para \\\"{}\\\" \"".format(concept))
+        return card_lines
+
+
+class ParseTranslation:
+
+    def __init__(self, translation):
+        self.translation = translation.split('\n')
+        self.counter = -1
+        self.concept = self.next_line().lower()
+        phonetic = self.next_line()
+        if phonetic[0] == '/':  # There was a phonetic line
+            self.next_line()
+
+    def next_line(self):
+        self.counter += 1
+        return self.translation[self.counter]
+
+    def get_concept(self):
+        return self.concept
+
+
+if __name__ == "__main__":
+    AnkiAutomatic().run()
